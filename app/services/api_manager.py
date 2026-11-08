@@ -22,14 +22,21 @@ class APIType(Enum):
 class APIManager:
     """Manager for interacting with AI APIs (OpenAI and Ollama)"""
 
-    def __init__(self, api_key: str = "", model: str = "gpt-3.5-turbo",
-                 api_type: str = "openai", ollama_url: str = "http://localhost:11434"):
-        """Initialize the API manager"""
+    def __init__(self, api_key: str = "", model: str = "",
+                 api_type: str = "openai", ollama_url: str = "http://localhost:11434",
+                 openai_base_url: str = "", max_requests_per_minute: int = 20):
+        """Initialize the API manager.
+
+        openai_base_url: leave empty for the official OpenAI API, or point it at any
+        OpenAI-compatible server (for example http://localhost:1234/v1 for LM Studio).
+        max_requests_per_minute: 0 disables rate limiting.
+        """
         self.api_key = api_key
         self.model = model
         self.api_type = APIType(api_type)
         self.client = None
         self.logger = logging.getLogger("APIManager")
+        self.openai_base_url = openai_base_url
 
         # Initialize Ollama manager
         self.ollama_url = ollama_url
@@ -38,7 +45,7 @@ class APIManager:
         # Rate limiting
         self.request_count = 0
         self.request_start_time = time.time()
-        self.max_requests_per_minute = 20  # Default safe limit
+        self.max_requests_per_minute = max_requests_per_minute
 
         # Initialize if API key is provided for OpenAI
         if api_key and self.api_type == APIType.OPENAI:
@@ -49,13 +56,14 @@ class APIManager:
         if self.api_type == APIType.OPENAI:
             if api_key:
                 self.api_key = api_key
-
             if not self.api_key:
                 self.logger.error("API Key is required for OpenAI")
                 return False
-
             try:
-                self.client = OpenAI(api_key=self.api_key)
+                self.client = OpenAI(
+                    api_key=self.api_key,
+                    base_url=self.openai_base_url or None
+                )
                 return True
             except Exception as e:
                 self.logger.error(f"Failed to initialize OpenAI client: {e}")
@@ -82,15 +90,12 @@ class APIManager:
     def get_available_models(self) -> List[Dict[str, Any]]:
         """Get list of available models based on current API type"""
         if self.api_type == APIType.OPENAI:
-            # Return standard OpenAI models (static list)
-            return [
-                {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "api": "openai"},
-                {"id": "gpt-4", "name": "GPT-4", "api": "openai"},
-                {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "api": "openai"},
-                {"id": "gpt-4o", "name": "GPT-4o", "api": "openai"},
-                {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "api": "openai"},
-                {"id": "gpt-3.5-turbo-16k", "name": "GPT-3.5 Turbo 16k", "api": "openai"}
-            ]
+            try:
+                models = self.client.models.list()
+                return [{"id": m.id, "name": m.id, "api": "openai"} for m in models.data]
+            except Exception as e:
+                self.logger.error(f"Error getting models: {e}")
+                return []
         else:  # OLLAMA
             # Fetch models from Ollama
             success, models, error = self.ollama_manager.list_available_models()
@@ -178,9 +183,8 @@ class APIManager:
             if not self.initialize():
                 return False, None, "API client not initialized"
 
-        # Check rate limits
-        if not self._check_rate_limit():
-            return False, None, "Rate limit exceeded. Please try again later."
+        # Wait if we're at the rate limit
+        self._check_rate_limit()
 
         formatted_prompt = f"{user_prompt}\n\nCell content: {cell_content}"
         
@@ -229,13 +233,21 @@ class APIManager:
         self.request_count += 1
 
     def _check_rate_limit(self) -> bool:
-        """Check if we're under the rate limit"""
+        """Wait until another request fits in the per-minute limit.
+
+        Runs in a worker thread, so sleeping here only pauses the batch, not the UI.
+        """
+        if not self.max_requests_per_minute:
+            return True
         current_time = time.time()
-        # Reset counter if a minute has passed
-        if current_time - self.request_start_time > 60:
+        elapsed = current_time - self.request_start_time
+        if elapsed > 60:
             self.request_count = 0
             self.request_start_time = current_time
-            return True
-
-        # Check if we're still under the limit
-        return self.request_count < self.max_requests_per_minute
+        elif self.request_count >= self.max_requests_per_minute:
+            wait = 60 - elapsed
+            self.logger.info(f"Rate limit of {self.max_requests_per_minute}/min reached, waiting {wait:.0f}s")
+            time.sleep(wait)
+            self.request_count = 0
+            self.request_start_time = time.time()
+        return True

@@ -135,7 +135,7 @@ class BatchProcessor:
                     )
 
                     # Small delay between cells to avoid rate limiting
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.0)
 
                 # Add to all results
                 all_results.extend(batch_results)
@@ -145,7 +145,7 @@ class BatchProcessor:
                 self._update_progress(progress_callback, processed, success_count, error_count, len(cells), status_text)
 
                 # Small delay between batches
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.0)
 
             # Final update
             status = "Processing completed" if not self.processing_cancelled else "Processing cancelled"

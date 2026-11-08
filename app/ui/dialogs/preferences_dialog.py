@@ -165,25 +165,21 @@ class PreferencesDialog:
             anchor=tk.W, padx=5, pady=5
         )
 
+        # OpenAI-compatible server (LM Studio, vLLM, etc.)
+        base_url_frame = ttk.LabelFrame(openai_frame, text="API Base URL", padding=10)
+        base_url_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(base_url_frame, text="Leave empty for OpenAI, or use e.g. http://localhost:1234/v1 for LM Studio:").pack(
+            anchor=tk.W, padx=5, pady=5
+        )
+        self.openai_base_url_var = tk.StringVar()
+        ttk.Entry(base_url_frame, textvariable=self.openai_base_url_var, width=40).pack(fill=tk.X, padx=5, pady=5)
+
         # Default model
         model_frame = ttk.LabelFrame(openai_frame, text="Default Model", padding=10)
         model_frame.pack(fill=tk.X, pady=10)
 
         self.model_var = tk.StringVar()
-        models = [
-            "gpt-3.5-turbo",
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-4-1106-preview",
-            "gpt-4-0125-preview",
-            "gpt-4-vision-preview",
-            "gpt-4.1-preview",
-            "gpt-3.5-turbo-16k"
-        ]
-
-        ttk.Combobox(model_frame, textvariable=self.model_var, values=models, width=30, state="readonly").pack(
+        ttk.Entry(model_frame, textvariable=self.model_var, width=30).pack(
             fill=tk.X, padx=5, pady=5
         )
 
@@ -402,7 +398,8 @@ class PreferencesDialog:
         # API settings
         self.api_type_var.set(self.config.get('api_type', 'openai'))
         self.api_key_var.set(self.config.get('api_key', ''))
-        self.model_var.set(self.config.get('model', 'gpt-3.5-turbo'))
+        self.model_var.set(self.config.get('model', 'gpt-4o-mini'))
+        self.openai_base_url_var.set(self.config.get('openai_base_url', ''))
         self.ollama_url_var.set(self.config.get('ollama_url', 'http://localhost:11434'))
         self.rate_limit_var.set(str(self.config.get('rate_limit', 20)))
         self.max_tokens_var.set(str(self.config.get('max_tokens', 150)))
@@ -474,6 +471,7 @@ class PreferencesDialog:
         settings['api_type'] = self.api_type_var.get()
         settings['api_key'] = self.api_key_var.get()
         settings['model'] = self.model_var.get()
+        settings['openai_base_url'] = self.openai_base_url_var.get().strip()
         settings['ollama_url'] = self.ollama_url_var.get()
 
         try:
@@ -546,9 +544,10 @@ class PreferencesDialog:
             'default_system_prompt': 'You are a data manipulation assistant. Transform the cell content according to the user\'s instructions.',
             'api_type': 'openai',
             'api_key': '',
-            'model': 'gpt-3.5-turbo',
+            'model': 'gpt-4o-mini',
+            'openai_base_url': '',
             'ollama_url': 'http://localhost:11434',
-            'ollama_model': 'llama3',
+            'ollama_model': '',
             'rate_limit': 20,
             'max_tokens': 150,
             'temperature': 0.3,

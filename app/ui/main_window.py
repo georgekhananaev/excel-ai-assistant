@@ -51,7 +51,9 @@ class ExcelAIAssistantApp:
             api_key=self.config.get('api_key', ''),
             model=self._get_current_model_name(),
             api_type=api_type,
-            ollama_url=self.config.get('ollama_url', 'http://localhost:11434')
+            ollama_url=self.config.get('ollama_url', 'http://localhost:11434'),
+            openai_base_url=self.config.get('openai_base_url', ''),
+            max_requests_per_minute=int(self.config.get('rate_limit', 20) or 0)
         )
 
         self.data_manager = DataManager()
@@ -136,24 +138,9 @@ class ExcelAIAssistantApp:
         ai_menu.add_cascade(label="Select Model", menu=model_menu)
 
         # Create model radio buttons
-        self.model_var = tk.StringVar(value=self.config.get('model', 'gpt-3.5-turbo'))
-        models = [
-            "gpt-3.5-turbo",
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-4o",
-            "gpt-4o-mini",
-            "gpt-4-1106-preview",
-            "gpt-4-0125-preview",
-            "gpt-4-1106-vision-preview",
-            "gpt-4-vision-preview",
-            "gpt-4.1-preview",
-            "gpt-3.5-turbo-16k"
-        ]
-
-        for model in models:
-            model_menu.add_radiobutton(label=model, value=model, variable=self.model_var,
-                                       command=self._model_changed)
+        self.model_var = tk.StringVar(value=self.config.get('model', ''))
+        # Populate dynamically - will be filled when API is ready
+        self._populate_model_menu(model_menu)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -166,6 +153,17 @@ class ExcelAIAssistantApp:
         # Set up keyboard shortcuts
         self.root.bind("<Control-o>", lambda event: self.open_file())
         self.root.bind("<Control-s>", lambda event: self.save_file())
+
+    def _populate_model_menu(self, model_menu):
+        """Populate model menu from API"""
+        model_menu.delete(0, 'end')
+        models = self.api_manager.get_available_models()
+        for m in models:
+            model_menu.add_radiobutton(
+                label=m['id'], value=m['id'],
+                variable=self.model_var,
+                command=self._model_changed
+            )
 
     def _create_ui(self):
         """Create the main UI components"""
@@ -296,10 +294,9 @@ class ExcelAIAssistantApp:
     def _get_current_model_name(self):
         """Get the appropriate model name based on current API type"""
         api_type = self.config.get('api_type', 'openai').lower()  # Ensure lowercase
-        if api_type == 'openai':
-            return self.config.get('model', 'gpt-3.5-turbo')
-        else:  # ollama
-            return self.config.get('ollama_model', 'llama3')
+        if api_type == 'ollama':
+            return self.config.get('ollama_model', '')
+        return self.config.get('model', '')
 
 
     def _update_model_list(self):
@@ -307,36 +304,40 @@ class ExcelAIAssistantApp:
         api_type = self.api_type_var.get().lower()  # Ensure lowercase for consistency
 
         if api_type == 'openai':
-            # Fixed list of OpenAI models
-            models = [
-                "gpt-3.5-turbo",
-                "gpt-4",
-                "gpt-4-turbo",
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-4-1106-preview",
-                "gpt-4-0125-preview",
-                "gpt-4-vision-preview",
-                "gpt-4.1-preview",
-                "gpt-3.5-turbo-16k"
-            ]
-            self.model_combobox['values'] = models
-
-            # Set current model or default
-            current_model = self.config.get('model', 'gpt-3.5-turbo')
-            if current_model in models:
-                self.model_combobox.set(current_model)
-            else:
-                self.model_combobox.set('gpt-3.5-turbo')
-
-            # Update API manager with the correct model
-            self.api_manager.set_model(self.model_combobox.get())
+            self.model_combobox.set("Loading...")
+            threading.Thread(target=self._load_openai_models, daemon=True).start()
         else:  # ollama
             # Get available Ollama models
             self.model_combobox.set("Loading...")
 
             # Start a thread to load models
             threading.Thread(target=self._load_ollama_models, daemon=True).start()
+
+    def _load_openai_models(self):
+        """Load available OpenAI-compatible models in a background thread"""
+        try:
+            models = self.api_manager.get_available_models()
+            model_names = [model["id"] for model in models]
+            self.root.after(0, lambda: self._update_openai_models(model_names))
+        except Exception as e:
+            self.log(f"Error loading models: {str(e)}", "ERROR")
+            self.root.after(0, lambda: self._update_openai_models([]))
+
+    def _update_openai_models(self, model_names):
+        """Update the UI with loaded OpenAI-compatible models"""
+        if model_names:
+            self.model_combobox['values'] = model_names
+            current_model = self.config.get('model', '')
+            if current_model in model_names:
+                self.model_combobox.set(current_model)
+            else:
+                self.model_combobox.set(model_names[0])
+                self.config.set('model', model_names[0])
+            self.api_manager.set_model(self.model_combobox.get())
+        else:
+            self.model_combobox['values'] = ["No models found"]
+            self.model_combobox.set("No models found")
+            self.log("No models found. Make sure the API server is running.", "WARNING")
 
     def _load_ollama_models(self):
         """Load available Ollama models in a background thread"""
@@ -1874,7 +1875,7 @@ class ExcelAIAssistantApp:
         # Cost estimation (rough approximation)
         model = self.model_var.get()
 
-        # Price per 1000 tokens (input + output combined for simplicity)
+        # Price per 1000 tokens - approximation, 0 for local models
         prices = {
             "gpt-3.5-turbo": 0.002,
             "gpt-3.5-turbo-16k": 0.004,
@@ -1882,11 +1883,6 @@ class ExcelAIAssistantApp:
             "gpt-4-turbo": 0.03,
             "gpt-4o": 0.03,
             "gpt-4o-mini": 0.015,
-            "gpt-4-1106-preview": 0.03,
-            "gpt-4-0125-preview": 0.03,
-            "gpt-4-1106-vision-preview": 0.03,
-            "gpt-4-vision-preview": 0.06,
-            "gpt-4.1-preview": 0.06
         }
 
         price_per_1k = prices.get(model, 0.002)
@@ -2330,6 +2326,12 @@ class ExcelAIAssistantApp:
         if 'model' in settings:
             self.model_var.set(settings['model'])
             self.api_manager.set_model(settings['model'])
+
+        # Apply rate limit and base URL changes before re-initializing the client
+        if 'rate_limit' in settings:
+            self.api_manager.max_requests_per_minute = int(settings['rate_limit'] or 0)
+        if 'openai_base_url' in settings:
+            self.api_manager.openai_base_url = settings['openai_base_url']
 
         # Apply API key changes
         if 'api_key' in settings:
