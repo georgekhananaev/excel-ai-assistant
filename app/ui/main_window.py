@@ -48,11 +48,12 @@ class ExcelAIAssistantApp:
 
         # Initialize services with proper API type handling
         self.api_manager = APIManager(
-           api_key=self.config.get('api_key', ''),
-           model=self._get_current_model_name(),
-           api_type=api_type,
-           ollama_url=self.config.get('ollama_url', 'http://localhost:11434'),
-           openai_base_url=self.config.get('openai_base_url', 'http://localhost:1234/v1')
+            api_key=self.config.get('api_key', ''),
+            model=self._get_current_model_name(),
+            api_type=api_type,
+            ollama_url=self.config.get('ollama_url', 'http://localhost:11434'),
+            openai_base_url=self.config.get('openai_base_url', ''),
+            max_requests_per_minute=int(self.config.get('rate_limit', 20) or 0)
         )
 
         self.data_manager = DataManager()
@@ -293,6 +294,8 @@ class ExcelAIAssistantApp:
     def _get_current_model_name(self):
         """Get the appropriate model name based on current API type"""
         api_type = self.config.get('api_type', 'openai').lower()  # Ensure lowercase
+        if api_type == 'ollama':
+            return self.config.get('ollama_model', '')
         return self.config.get('model', '')
 
 
@@ -2323,6 +2326,12 @@ class ExcelAIAssistantApp:
         if 'model' in settings:
             self.model_var.set(settings['model'])
             self.api_manager.set_model(settings['model'])
+
+        # Apply rate limit and base URL changes before re-initializing the client
+        if 'rate_limit' in settings:
+            self.api_manager.max_requests_per_minute = int(settings['rate_limit'] or 0)
+        if 'openai_base_url' in settings:
+            self.api_manager.openai_base_url = settings['openai_base_url']
 
         # Apply API key changes
         if 'api_key' in settings:

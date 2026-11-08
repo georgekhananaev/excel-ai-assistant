@@ -23,27 +23,34 @@ class APIManager:
     """Manager for interacting with AI APIs (OpenAI and Ollama)"""
 
     def __init__(self, api_key: str = "", model: str = "",
-                api_type: str = "openai", ollama_url: str = "http://localhost:11434",
-                openai_base_url: str = "http://localhost:1234/v1"):
-       """Initialize the API manager"""
-       self.api_key = api_key
-       self.model = model
-       self.api_type = APIType(api_type)
-       self.client = None
-       self.logger = logging.getLogger("APIManager")
-       self.openai_base_url = openai_base_url
-       # Initialize Ollama manager
-       self.ollama_url = ollama_url
-       self.ollama_manager = OllamaAPIManager(base_url=ollama_url)
-       # Rate limiting
-       self.request_count = 0
-       self.request_start_time = time.time()
-       self.max_requests_per_minute = 1000000  # Unlimited
-       # Initialize if API key is provided for OpenAI
-       if api_key and self.api_type == APIType.OPENAI:
+                 api_type: str = "openai", ollama_url: str = "http://localhost:11434",
+                 openai_base_url: str = "", max_requests_per_minute: int = 20):
+        """Initialize the API manager.
+
+        openai_base_url: leave empty for the official OpenAI API, or point it at any
+        OpenAI-compatible server (for example http://localhost:1234/v1 for LM Studio).
+        max_requests_per_minute: 0 disables rate limiting.
+        """
+        self.api_key = api_key
+        self.model = model
+        self.api_type = APIType(api_type)
+        self.client = None
+        self.logger = logging.getLogger("APIManager")
+        self.openai_base_url = openai_base_url
+
+        # Initialize Ollama manager
+        self.ollama_url = ollama_url
+        self.ollama_manager = OllamaAPIManager(base_url=ollama_url)
+
+        # Rate limiting
+        self.request_count = 0
+        self.request_start_time = time.time()
+        self.max_requests_per_minute = max_requests_per_minute
+
+        # Initialize if API key is provided for OpenAI
+        if api_key and self.api_type == APIType.OPENAI:
             self.initialize()
-        
-        
+
     def initialize(self, api_key: Optional[str] = None) -> bool:
         """Initialize the API client"""
         if self.api_type == APIType.OPENAI:
@@ -55,7 +62,7 @@ class APIManager:
             try:
                 self.client = OpenAI(
                     api_key=self.api_key,
-                    base_url=self.openai_base_url
+                    base_url=self.openai_base_url or None
                 )
                 return True
             except Exception as e:
@@ -176,9 +183,8 @@ class APIManager:
             if not self.initialize():
                 return False, None, "API client not initialized"
 
-        # Check rate limits
-        if not self._check_rate_limit():
-            return False, None, "Rate limit exceeded. Please try again later."
+        # Wait if we're at the rate limit
+        self._check_rate_limit()
 
         formatted_prompt = f"{user_prompt}\n\nCell content: {cell_content}"
         
@@ -227,13 +233,21 @@ class APIManager:
         self.request_count += 1
 
     def _check_rate_limit(self) -> bool:
-        """Check if we're under the rate limit"""
+        """Wait until another request fits in the per-minute limit.
+
+        Runs in a worker thread, so sleeping here only pauses the batch, not the UI.
+        """
+        if not self.max_requests_per_minute:
+            return True
         current_time = time.time()
-        # Reset counter if a minute has passed
-        if current_time - self.request_start_time > 60:
+        elapsed = current_time - self.request_start_time
+        if elapsed > 60:
             self.request_count = 0
             self.request_start_time = current_time
-            return True
-
-        # Check if we're still under the limit
-        return self.request_count < self.max_requests_per_minute
+        elif self.request_count >= self.max_requests_per_minute:
+            wait = 60 - elapsed
+            self.logger.info(f"Rate limit of {self.max_requests_per_minute}/min reached, waiting {wait:.0f}s")
+            time.sleep(wait)
+            self.request_count = 0
+            self.request_start_time = time.time()
+        return True

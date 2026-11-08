@@ -18,8 +18,12 @@ class AppConfig:
             # API settings
             'api_type': 'openai',  # 'openai' or 'ollama'
             'api_key': '',  # API key (required for real OpenAI, any string for LM Studio)
-            'openai_base_url': 'http://localhost:1234/v1',  # OpenAI-compatible API base URL
+            'model': 'gpt-4o-mini',  # Selected OpenAI-compatible model
+            # Empty = official OpenAI API. Set e.g. http://localhost:1234/v1 for LM Studio.
+            'openai_base_url': '',
             'ollama_url': 'http://localhost:11434',  # Ollama API URL
+            'ollama_model': '',  # Selected Ollama model
+            'rate_limit': 20,  # Max requests per minute, 0 = no limit
 
             # UI settings
             'theme': 'system',
@@ -172,15 +176,16 @@ class AppConfig:
     def get_active_model(self):
         """Get the currently active model info"""
         api_type = self.get('api_type', 'openai')
+        model_key = 'ollama_model' if api_type == 'ollama' else 'model'
         return {
             'api_type': api_type,
-            'model': self.get('model', '')
+            'model': self.get(model_key, '')
         }
 
     def set_active_model(self, api_type, model):
         """Set the active model"""
         self.set('api_type', api_type)
-        self.set('model', model)
+        self.set('ollama_model' if api_type == 'ollama' else 'model', model)
 
     def add_recent_file(self, file_path):
         """Add a file to the recent files list"""
@@ -233,8 +238,11 @@ class AppConfig:
             # API settings
             'api_type': 'openai',
             'api_key': '',
-            'openai_base_url': 'http://localhost:1234/v1',
+            'model': 'gpt-4o-mini',
+            'openai_base_url': '',
             'ollama_url': 'http://localhost:11434',
+            'ollama_model': '',
+            'rate_limit': 20,
 
             # UI settings
             'theme': 'system',
